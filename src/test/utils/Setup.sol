@@ -25,6 +25,7 @@ contract Setup is ExtendedTest, IEvents {
 
     address public pool = 0x6dA7f1C193ab6C4bD16EB14A6305BBA8d25737fF;
     address public rewardsContract = 0x0584E40DA9cE45850d15C82743f8DB96216B4CcB;
+    uint256 public maxSingleTrade = 10_000e6;
 
     mapping(string => address) public tokenAddrs;
 
@@ -79,7 +80,8 @@ contract Setup is ExtendedTest, IEvents {
                     address(asset),
                     "Tokenized Strategy",
                     pool,
-                    rewardsContract
+                    rewardsContract,
+                    maxSingleTrade
                 )
             )
         );
@@ -162,5 +164,6 @@ contract Setup is ExtendedTest, IEvents {
         tokenAddrs["USDT"] = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
         tokenAddrs["DAI"] = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
         tokenAddrs["USDC"] = 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174;
+        tokenAddrs["WMATIC"] = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
     }
 }

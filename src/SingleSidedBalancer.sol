@@ -26,7 +26,7 @@ interface IRewardPoolDepositWrapper {
 //  1. Non-manipulatable getRate
 // 2. Add that to deposits
 //  3. Be able to pull Aura token
-// 4. Add constructor Args
+// 4. Factory
 
 contract SingleSidedBalancer is BaseHealthCheck {
     using SafeERC20 for ERC20;
@@ -34,27 +34,22 @@ contract SingleSidedBalancer is BaseHealthCheck {
     address internal constant balancerVault =
         0xBA12222222228d8Ba445958a75a0704d566BF2C8;
     
-    address internal constant balWeth = 0x3d468AB2329F296e1b9d8476Bb54Dd77D8c2320f;
-
-    address internal constant weth = 0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619;
-
-    address public immutable pool;
-    bytes32 public immutable poolId;
-
-    IConvexDeposit public constant depositContract =
-        IConvexDeposit(0xA57b8d98dAE62B26Ec3bcC4a365338157060B234);
-
-    IConvexRewards public immutable rewardsContract;
-
-    address internal constant bal = 0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3;
-    address internal constant aura = 0x1509706a6c66CA549ff0cB464de88231DDBe213B;
-
-    uint256 internal immutable pid;
-
     address internal constant depositWrapper =
         0xcE66E8300dC1d1F5b0e46E9145fDf680a7E41146;
 
+    address internal constant bal = 
+        0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3;
+    address internal constant aura = 
+        0x1509706a6c66CA549ff0cB464de88231DDBe213B;
+    
+    IConvexRewards public immutable rewardsContract;
+
+    address public immutable pool;
+
+    bytes32 public immutable poolId;
+
     uint256 internal immutable length;
+    
     uint256 internal immutable spot;
 
     uint256 internal immutable scaler;
@@ -67,11 +62,11 @@ contract SingleSidedBalancer is BaseHealthCheck {
         address _asset,
         string memory _name,
         address _pool,
-        address _rewardsContract
+        address _rewardsContract,
+        uint256 _maxSingleTrade
     ) BaseHealthCheck(_asset, _name) {
         rewardsContract = IConvexRewards(_rewardsContract);
-        //Update the PID for the rewards pool
-        pid = rewardsContract.pid();
+
         pool = _pool;
         poolId = IBalancerPool(_pool).getPoolId();
         (IERC20[] memory _tokens, , ) = IBalancerVault(balancerVault)
@@ -81,7 +76,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
 
         scaler = 10 ** (ERC20(pool).decimals() - asset.decimals());
 
-        maxSingleTrade = 10_000e6;
+        maxSingleTrade = _maxSingleTrade;
 
         _setLossLimitRatio(100);
 
@@ -249,7 +244,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
         uint256 looseAsset = asset.balanceOf(address(this));
 
         if (looseAsset != 0) {
-            _deployFunds(Math.min(_amount, maxSingleTrade));
+            _deployFunds(Math.min(looseAsset, maxSingleTrade));
         }
 
         _totalAssets =
