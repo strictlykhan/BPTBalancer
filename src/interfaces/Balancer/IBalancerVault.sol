@@ -25,6 +25,12 @@ interface IBalancerVault {
         GIVEN_IN,
         GIVEN_OUT
     }
+    enum UserBalanceOpKind {
+        DEPOSIT_INTERNAL,
+        WITHDRAW_INTERNAL,
+        TRANSFER_INTERNAL,
+        TRANSFER_EXTERNAL
+    }
 
     /**
      * @dev Data for each individual swap executed by `batchSwap`. The asset in and out fields are indexes into the
@@ -203,4 +209,25 @@ interface IBalancerVault {
         IAsset[] memory assets,
         FundManagement memory funds
     ) external view returns (int256[] memory assetDeltas);
+
+    /**
+     * @dev Data for `manageUserBalance` operations, which include the possibility for ETH to be sent and received
+     without manual WETH wrapping or unwrapping.
+     */
+    struct UserBalanceOp {
+        UserBalanceOpKind kind;
+        IAsset asset;
+        uint256 amount;
+        address sender;
+        address payable recipient;
+    }
+
+    /**
+     * @dev Performs a set of user balance operations, which involve Internal Balance (deposit, withdraw or transfer)
+     * and plain ERC20 transfers using the Vault's allowance. This last feature is particularly useful for relayers, as
+     * it lets integrators reuse a user's Vault allowance.
+     *
+     * For each operation, if the caller is not `sender`, it must be an authorized relayer for them.
+     */
+    function manageUserBalance(UserBalanceOp[] memory ops) external payable;
 }

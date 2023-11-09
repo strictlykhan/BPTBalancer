@@ -11,11 +11,21 @@ contract ShutdownTest is Setup {
     function test_shutdownCanWithdraw(uint256 _amount) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
 
+        vm.prank(management);
+        strategy.setDepositTrigger(_amount - 1);
+
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
-        // TODO: Implement logic so totalDebt is _amount and totalIdle = 0.
         checkStrategyTotals(strategy, _amount, 0, _amount);
+
+        (bool trigger, ) = strategy.tendTrigger();
+        assertTrue(trigger);
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        checkStrategyTotals(strategy, _amount, _amount, 0);
 
         // Earn Interest
         skip(1 days);
@@ -24,8 +34,7 @@ contract ShutdownTest is Setup {
         vm.prank(management);
         strategy.shutdownStrategy();
 
-        // TODO: Implement logic so totalDebt is _amount and totalIdle = 0.
-        checkStrategyTotals(strategy, _amount, 0, _amount);
+        checkStrategyTotals(strategy, _amount, _amount, 0);
 
         // Make sure we can still withdraw the full amount
         uint256 balanceBefore = asset.balanceOf(user);
@@ -34,11 +43,7 @@ contract ShutdownTest is Setup {
         vm.prank(user);
         strategy.redeem(_amount, user, user);
 
-        assertGe(
-            asset.balanceOf(user),
-            balanceBefore + _amount,
-            "!final balance"
-        );
+        assertRelApproxEq(asset.balanceOf(user), balanceBefore + _amount, 10);
     }
 
     // TODO: Add tests for any emergency function added.

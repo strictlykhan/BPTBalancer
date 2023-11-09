@@ -7,6 +7,8 @@ import {ExtendedTest} from "./ExtendedTest.sol";
 import {SingleSidedBalancer, ERC20} from "../../SingleSidedBalancer.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
 
+import {SingleSidedBalancerFactory} from "../../SingleSidedBalancerFactory.sol";
+
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 
@@ -22,10 +24,11 @@ contract Setup is ExtendedTest, IEvents {
     // Contract instances that we will use repeatedly.
     ERC20 public asset;
     IStrategyInterface public strategy;
+    SingleSidedBalancerFactory public strategyFactory;
 
-    address public pool = 0x6dA7f1C193ab6C4bD16EB14A6305BBA8d25737fF;
-    address public rewardsContract = 0x0584E40DA9cE45850d15C82743f8DB96216B4CcB;
-    uint256 public maxSingleTrade = 10_000e6;
+    address public pool = 0xcd78A20c597E367A4e478a2411cEB790604D7c8F;
+    address public rewardsContract = 0x39EE6Fb813052E67260A3F95D3739B336aABD2C6;
+    uint256 public maxSingleTrade = 1e25;
 
     mapping(string => address) public tokenAddrs;
 
@@ -43,8 +46,8 @@ contract Setup is ExtendedTest, IEvents {
     uint256 public MAX_BPS = 10_000;
 
     // Fuzz from $0.01 of 1e6 stable coins up to 1 trillion of a 1e18 coin
-    uint256 public maxFuzzAmount = 1e8;
-    uint256 public minFuzzAmount = 1_000_000;
+    uint256 public maxFuzzAmount = 1e24;
+    uint256 public minFuzzAmount = 100e18;
 
     // Default profit max unlock time is set for 10 days
     uint256 public profitMaxUnlockTime = 10 days;
@@ -52,8 +55,14 @@ contract Setup is ExtendedTest, IEvents {
     function setUp() public virtual {
         _setTokenAddrs();
 
+        strategyFactory = new SingleSidedBalancerFactory(
+            management,
+            performanceFeeRecipient,
+            keeper
+        );
+
         // Set asset
-        asset = ERC20(tokenAddrs["USDC"]);
+        asset = ERC20(tokenAddrs["WMATIC"]);
 
         // Set decimals
         decimals = asset.decimals();
@@ -75,26 +84,20 @@ contract Setup is ExtendedTest, IEvents {
     function setUpStrategy() public returns (address) {
         // we save the strategy as a IStrategyInterface to give it the needed interface
         IStrategyInterface _strategy = IStrategyInterface(
-            address(
-                new SingleSidedBalancer(
-                    address(asset),
-                    "Tokenized Strategy",
-                    pool,
-                    rewardsContract,
-                    maxSingleTrade
-                )
+            strategyFactory.newSingleSidedBalancer(
+                address(asset),
+                "Tokenized Strategy",
+                pool,
+                rewardsContract,
+                maxSingleTrade
             )
         );
 
-        // set keeper
-        _strategy.setKeeper(keeper);
-        // set treasury
-        _strategy.setPerformanceFeeRecipient(performanceFeeRecipient);
-        // set management of the strategy
-        _strategy.setPendingManagement(management);
-
         vm.prank(management);
         _strategy.acceptManagement();
+
+        vm.prank(management);
+        _strategy.setMaxTendBasefee(type(uint256).max);
 
         return address(_strategy);
     }
