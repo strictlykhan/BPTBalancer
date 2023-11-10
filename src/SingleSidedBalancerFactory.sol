@@ -23,11 +23,7 @@ contract SingleSidedBalancerFactory {
      * @param _rewards Address where performance fees will be sent
      * @param _keeper Address of the keeper bot
      */
-    constructor(
-        address _management,
-        address _rewards,
-        address _keeper
-    ) {
+    constructor(address _management, address _rewards, address _keeper) {
         management = _management;
         rewards = _rewards;
         keeper = _keeper;

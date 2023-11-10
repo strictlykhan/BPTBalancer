@@ -17,15 +17,7 @@ interface IConvexDeposit {
     function crv() external view returns (address);
 
     // give us info about a pool based on its pid
-    function poolInfo(uint256)
-        external
-        view
-        returns (
-            address,
-            address,
-            address,
-            address,
-            address,
-            bool
-        );
+    function poolInfo(
+        uint256
+    ) external view returns (address, address, address, address, address, bool);
 }

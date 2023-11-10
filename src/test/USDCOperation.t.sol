@@ -4,9 +4,7 @@ pragma solidity ^0.8.18;
 import "forge-std/console.sol";
 import {OperationTest, ERC20, IStrategyInterface} from "./Operation.t.sol";
 
-contract USDCOperationTest {
-
-}
+contract USDCOperationTest {}
 /**
  is OperationTest {
     function setUp() public override {

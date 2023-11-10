@@ -121,12 +121,14 @@ interface IBalancerVault {
         ExitPoolRequest calldata request
     ) external;
 
-    function getPool(bytes32 poolId)
-        external
-        view
-        returns (address poolAddress, PoolSpecialization);
+    function getPool(
+        bytes32 poolId
+    ) external view returns (address poolAddress, PoolSpecialization);
 
-    function getPoolTokenInfo(bytes32 poolId, IERC20 token)
+    function getPoolTokenInfo(
+        bytes32 poolId,
+        IERC20 token
+    )
         external
         view
         returns (
@@ -136,7 +138,9 @@ interface IBalancerVault {
             address assetManager
         );
 
-    function getPoolTokens(bytes32 poolId)
+    function getPoolTokens(
+        bytes32 poolId
+    )
         external
         view
         returns (

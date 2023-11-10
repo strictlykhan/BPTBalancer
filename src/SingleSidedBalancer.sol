@@ -45,33 +45,43 @@ contract SingleSidedBalancer is BaseHealthCheck {
         return revertData.length == 0;
     }
 
+    //////////////////////// CONSTANTS \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+    // Address of the main balancer vault.
     address internal constant balancerVault =
         0xBA12222222228d8Ba445958a75a0704d566BF2C8;
-
+    // Aura deposit wrapper. Will deposit into lp and stake the lp.
     address internal constant depositWrapper =
         0xcE66E8300dC1d1F5b0e46E9145fDf680a7E41146;
-
+    /// Reward tokens.
     address internal constant bal = 0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3;
     address internal constant aura = 0x1509706a6c66CA549ff0cB464de88231DDBe213B;
 
+    //////////////////////// IMMUTABLE \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+    // Address of the lp specific Aura staker.
     address public immutable rewardsContract;
-
+    // Address of the LP pool we are using.
     address public immutable pool;
-
+    // The lp pools specific pool id.
     bytes32 public immutable poolId;
-
+    // The length of the array of tokens the lp uses.
+    // This is inclusive of the BPT token.
     uint256 internal immutable length;
-
+    // The index in the tokens array our `asset` sits at.
     uint256 internal immutable spot;
-
+    // Difference in decimals between asset and BPT(1e18).
     uint256 internal immutable scaler;
 
+    //////////////////////// STORAGE \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+    // The array of lp tokens all cast into the IAsset interface.
     IAsset[] internal tokens;
-
+    // The max in asset we will deposit or withdraw at a time.
     uint256 public maxSingleTrade;
-
+    // The amount in asset that will trigger a tend if idle.
     uint256 public depositTrigger;
-
+    // The max amount the base fee can be for a tend to happen.
     uint256 public maxTendBasefee;
 
     constructor(
@@ -96,7 +106,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
         (tokens, spot) = _setTokensAndSpot(_tokens);
 
         // Amount to scale up or down from asset -> BPT token.
-        scaler = 10**(ERC20(pool).decimals() - asset.decimals());
+        scaler = 10 ** (ERC20(pool).decimals() - asset.decimals());
 
         // Allow for 1% loss.
         _setLossLimitRatio(100);
@@ -113,11 +123,9 @@ contract SingleSidedBalancer is BaseHealthCheck {
         maxTendBasefee = 100e9;
     }
 
-    function _setTokensAndSpot(IERC20[] memory _tokens)
-        internal
-        view
-        returns (IAsset[] memory tokens_, uint256 _spot)
-    {
+    function _setTokensAndSpot(
+        IERC20[] memory _tokens
+    ) internal view returns (IAsset[] memory tokens_, uint256 _spot) {
         tokens_ = new IAsset[](length);
 
         for (uint256 i = 0; i < length; ++i) {
@@ -144,6 +152,46 @@ contract SingleSidedBalancer is BaseHealthCheck {
      * to deposit in the yield source.
      */
     function _deployFunds(uint256 _amount) internal override {}
+
+    /**
+     * @notice Deploy loose asset into the LP and stake it.
+     * @dev We don't deploy during each deposit but rather only during tends and reports.
+     */
+    function _depositAndStake(uint256 _amount) internal {
+        if (_amount == 0) return;
+
+        IAsset[] memory _assets = new IAsset[](length);
+        uint256[] memory _maxAmountsIn = new uint256[](length);
+
+        _assets = tokens;
+        _maxAmountsIn[spot] = _amount;
+
+        // Amounts array without the bpt token
+        uint256[] memory amountsIn = new uint256[](length - 1);
+        amountsIn[spot] = _amount;
+
+        bytes memory data = abi.encode(
+            IBalancerVault.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT,
+            amountsIn,
+            0
+        );
+
+        IBalancerVault.JoinPoolRequest memory _request = IBalancerVault
+            .JoinPoolRequest({
+                assets: _assets,
+                maxAmountsIn: _maxAmountsIn,
+                userData: data,
+                fromInternalBalance: false
+            });
+
+        IRewardPoolDepositWrapper(depositWrapper).depositSingle(
+            rewardsContract,
+            asset,
+            _amount,
+            poolId,
+            _request
+        );
+    }
 
     /**
      * @dev Will attempt to free the '_amount' of 'asset'.
@@ -231,12 +279,12 @@ contract SingleSidedBalancer is BaseHealthCheck {
         notReentered
         returns (uint256 _totalAssets)
     {
-        _claimAndSellRewards();
+        if (!TokenizedStrategy.isShutdown()) {
+            _claimAndSellRewards();
 
-        uint256 looseAsset = asset.balanceOf(address(this));
-
-        if (looseAsset != 0) {
-            _depositAndStake(Math.min(looseAsset, maxSingleTrade));
+            _depositAndStake(
+                Math.min(asset.balanceOf(address(this)), maxSingleTrade)
+            );
         }
 
         _totalAssets =
@@ -244,43 +292,18 @@ contract SingleSidedBalancer is BaseHealthCheck {
             fromBptToAsset(totalLpBalance());
     }
 
-    function _depositAndStake(uint256 _amount) internal {
-        IAsset[] memory _assets = new IAsset[](length);
-        uint256[] memory _maxAmountsIn = new uint256[](length);
-
-        _assets = tokens;
-        _maxAmountsIn[spot] = _amount;
-
-        uint256[] memory amountsIn = new uint256[](length - 1);
-        amountsIn[spot] = _amount;
-
-        bytes memory data = abi.encode(
-            IBalancerVault.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT,
-            amountsIn,
-            0
-        );
-
-        IBalancerVault.JoinPoolRequest memory _request = IBalancerVault
-            .JoinPoolRequest({
-                assets: _assets,
-                maxAmountsIn: _maxAmountsIn,
-                userData: data,
-                fromInternalBalance: false
-            });
-
-        IRewardPoolDepositWrapper(depositWrapper).depositSingle(
-            rewardsContract,
-            asset,
-            _amount,
-            poolId,
-            _request
-        );
-    }
-
+    /**
+    * @notice
+        Convert from underlying asset to the amount of BPT shares.
+    */
     function fromAssetToBpt(uint256 _amount) public view returns (uint256) {
         return (_amount * 1e18 * scaler) / IBalancerPool(pool).getRate();
     }
 
+    /**
+     * @notice
+     *   Convert from an amount of BPT shares to the underlying asset.
+     */
     function fromBptToAsset(uint256 _amount) public view returns (uint256) {
         return (_amount * IBalancerPool(pool).getRate()) / 1e18 / scaler;
     }
@@ -412,9 +435,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
      *
      * @param . The current amount of idle funds that are available to deploy.
      */
-    function _tend(
-        uint256 /*_totalIdle*/
-    ) internal override notReentered {
+    function _tend(uint256 /*_totalIdle*/) internal override notReentered {
         _depositAndStake(
             Math.min(asset.balanceOf(address(this)), maxSingleTrade)
         );
@@ -494,27 +515,45 @@ contract SingleSidedBalancer is BaseHealthCheck {
     }
 
     // Can also be used to pause deposits.
-    function setMaxSingleTrade(uint256 _maxSingleTrade)
-        external
-        onlyEmergencyAuthorized
-    {
+    function setMaxSingleTrade(
+        uint256 _maxSingleTrade
+    ) external onlyEmergencyAuthorized {
         maxSingleTrade = _maxSingleTrade;
     }
 
     // Set the max base fee for tending to occur at.
-    function setMaxTendBasefee(uint256 _maxTendBasefee)
-        external
-        onlyManagement
-    {
+    function setMaxTendBasefee(
+        uint256 _maxTendBasefee
+    ) external onlyManagement {
         maxTendBasefee = _maxTendBasefee;
     }
 
     // Set the amount in asset that should trigger a tend if idle.
-    function setDepositTrigger(uint256 _depositTrigger)
-        external
-        onlyManagement
-    {
+    function setDepositTrigger(
+        uint256 _depositTrigger
+    ) external onlyManagement {
         depositTrigger = _depositTrigger;
+    }
+
+    // Manually pull funds out from the lp without shuting down.
+    // This will also stop new deposits and withdraws that would pull from the LP.
+    // Can call tend after this to update internal balances.
+    function manualWithdraw(
+        uint256 _amount
+    ) external notReentered onlyEmergencyAuthorized {
+        maxSingleTrade = 0;
+        depositTrigger = type(uint256).max;
+        _freeFunds(_amount);
+    }
+
+    function swapAura(
+        uint256 _amountOfAsset,
+        uint256 _amountOfAura
+    ) external onlyKeepers {
+        require(_amountOfAsset != 0, "cant swap with 0");
+        _getReward();
+        asset.safeTransferFrom(msg.sender, address(this), _amountOfAsset);
+        ERC20(aura).safeTransfer(msg.sender, _amountOfAura);
     }
 
     /**
@@ -538,11 +577,11 @@ contract SingleSidedBalancer is BaseHealthCheck {
      *
      * @param _amount The amount of asset to attempt to free.
      */
-    function _emergencyWithdraw(uint256 _amount)
-        internal
-        override
-        notReentered
-    {
-        _freeFunds(Math.min(_amount, maxSingleTrade));
+    function _emergencyWithdraw(
+        uint256 _amount
+    ) internal override notReentered {
+        maxSingleTrade = 0;
+        depositTrigger = type(uint256).max;
+        _freeFunds(_amount);
     }
 }

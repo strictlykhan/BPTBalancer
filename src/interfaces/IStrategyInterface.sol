@@ -25,4 +25,6 @@ interface IStrategyInterface is IBaseHealthCheck {
     function setMaxTendBasefee(uint256 _maxTendBasefee) external;
 
     function setDepositTrigger(uint256 _depositTrigger) external;
+
+    function manualWithdraw(uint256 _amount) external;
 }
