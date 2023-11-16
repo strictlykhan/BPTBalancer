@@ -12,6 +12,10 @@ import {IBalancerVault, IERC20} from "./interfaces/Balancer/IBalancerVault.sol";
 import {IConvexRewards} from "./interfaces/Convex/IConvexRewards.sol";
 import {IRewardPoolDepositWrapper} from "./interfaces/Convex/IRewardPoolDepositWrapper.sol";
 
+interface ISeller {
+    function depositRewardToken(address _token, uint256 _amount) external;
+}
+
 // TODO:
 // 2. Add that to deposits
 //  3. Be able to pull Aura token
@@ -77,6 +81,8 @@ contract SingleSidedBalancer is BaseHealthCheck {
 
     // The array of lp tokens all cast into the IAsset interface.
     IAsset[] internal tokens;
+    // Address that will handle selling the Aura tokens.
+    address public auraSeller;
     // The max in asset we will deposit or withdraw at a time.
     uint256 public maxSingleTrade;
     // The amount in asset that will trigger a tend if idle.
@@ -356,18 +362,23 @@ contract SingleSidedBalancer is BaseHealthCheck {
         IConvexRewards(rewardsContract).withdrawAndUnwrap(amount, false);
     }
 
-    function _claimAndSellRewards() internal {
-        _getReward();
-        _swapRewardTokens();
-    }
-
     /**
      * @notice
-     *   Overwritten main function to sell bal and aura with batchSwap
-     *   function used internally to sell the available Bal and Aura tokens
-     *   We sell bal/Aura -> WETH -> toSwapTo
+     *
      */
-    function _swapRewardTokens() internal {
+    function _claimAndSellRewards() internal {
+        // Claim all the pending rewards.
+        _getReward();
+
+        uint256 auraBalance = ERC20(aura).balanceOf(address(this));
+        // If we have Aura and the seller is set.
+        if (auraBalance != 0 && auraSeller != address(0)) {
+            // Let the swapper pull the Aura tokens.
+            _checkAllowance(auraSeller, aura, auraBalance);
+            // Tell the swapper that there is tokens to sell.
+            ISeller(auraSeller).depositRewardToken(aura, auraBalance);
+        }
+
         uint256 balBalance = ERC20(bal).balanceOf(address(this));
         //Cant swap 0
         if (balBalance == 0) return;
@@ -514,6 +525,11 @@ contract SingleSidedBalancer is BaseHealthCheck {
         }
     }
 
+    // Set the aura seller for Aura.
+    function setAuraSeller(address _auraSeller) external onlyManagement {
+        auraSeller = _auraSeller;
+    }
+
     // Can also be used to pause deposits.
     function setMaxSingleTrade(
         uint256 _maxSingleTrade
@@ -546,14 +562,23 @@ contract SingleSidedBalancer is BaseHealthCheck {
         _freeFunds(_amount);
     }
 
-    function swapAura(
-        uint256 _amountOfAsset,
-        uint256 _amountOfAura
-    ) external onlyKeepers {
-        require(_amountOfAsset != 0, "cant swap with 0");
-        _getReward();
-        asset.safeTransferFrom(msg.sender, address(this), _amountOfAsset);
-        ERC20(aura).safeTransfer(msg.sender, _amountOfAura);
+    /**
+     * @dev Internal safe function to make sure the contract you want to
+     * interact with has enough allowance to pull the desired tokens.
+     *
+     * @param _contract The address of the contract that will move the token.
+     * @param _token The ERC-20 token that will be getting spent.
+     * @param _amount The amount of `_token` to be spent.
+     */
+    function _checkAllowance(
+        address _contract,
+        address _token,
+        uint256 _amount
+    ) internal {
+        if (ERC20(_token).allowance(address(this), _contract) < _amount) {
+            ERC20(_token).approve(_contract, 0);
+            ERC20(_token).approve(_contract, _amount);
+        }
     }
 
     /**

@@ -107,6 +107,61 @@ contract OperationTest is Setup {
         }
     }
 
+    function test_report_withSeller(uint256 _amount) public {
+        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
+
+        // Turn off the loss limit
+        vm.prank(management);
+        strategy.setLossLimitRatio(9_000);
+
+        assertEq(strategy.auraSeller(), address(0));
+
+        vm.expectRevert("!management");
+        vm.prank(user);
+        strategy.setAuraSeller(address(mockSeller));
+
+        vm.prank(management);
+        strategy.setDepositTrigger(_amount - 1);
+
+        // Deposit into strategy
+        mintAndDepositIntoStrategy(strategy, user, _amount);
+
+        checkStrategyTotals(strategy, _amount, 0, _amount);
+
+        (bool trigger, ) = strategy.tendTrigger();
+        assertTrue(trigger);
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        checkStrategyTotals(strategy, _amount, _amount, 0);
+
+        // Earn Interest
+        skip(10 days);
+
+        // Report profit
+        vm.prank(keeper);
+        strategy.report();
+
+        // There should be loose Aura in the strategy.
+        assertGt(ERC20(aura).balanceOf(address(strategy)), 0);
+
+        skip(strategy.profitMaxUnlockTime());
+
+        vm.prank(management);
+        strategy.setAuraSeller(address(mockSeller));
+
+        assertEq(strategy.auraSeller(), address(mockSeller));
+
+        // Report profit
+        vm.prank(keeper);
+        strategy.report();
+
+        // There should be no more Aura in the strategy.
+        assertEq(ERC20(aura).balanceOf(address(strategy)), 0);
+        assertGt(ERC20(aura).balanceOf(address(mockSeller)), 0);
+    }
+
     function test_profitableReport_withFees(
         uint256 _amount,
         uint16 _profitFactor
