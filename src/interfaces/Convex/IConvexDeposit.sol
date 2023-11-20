@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: Unlicense
-pragma solidity ^0.8.12;
+pragma solidity 0.8.18;
 
 interface IConvexDeposit {
     // deposit into convex, receive a tokenized deposit.  parameter to stake immediately (we always do this).
