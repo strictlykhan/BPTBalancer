@@ -60,6 +60,9 @@ contract OperationTest is Setup {
         );
 
         vm.prank(management);
+        strategy.setProfitLimitRatio(10_000);
+
+        vm.prank(management);
         strategy.setDepositTrigger(_amount - 1);
 
         // Deposit into strategy
@@ -107,6 +110,76 @@ contract OperationTest is Setup {
         }
     }
 
+    function test_setTradeFactory(uint256 _amount) public {
+        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
+
+        vm.prank(management);
+        strategy.setDoHealthCheck(false);
+
+        assertEq(strategy.tradeFactory(), address(0));
+        assertTrue(!mockTradeFactory.enabled());
+
+        vm.expectRevert("!management");
+        vm.prank(user);
+        strategy.setTradeFactory(address(mockTradeFactory));
+
+        vm.prank(management);
+        strategy.setDepositTrigger(_amount - 1);
+
+        // Deposit into strategy
+        mintAndDepositIntoStrategy(strategy, user, _amount);
+
+        checkStrategyTotals(strategy, _amount, 0, _amount);
+
+        (bool trigger, ) = strategy.tendTrigger();
+        assertTrue(trigger);
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        checkStrategyTotals(strategy, _amount, _amount, 0);
+
+        // Earn Interest
+        skip(10 days);
+
+        // Report profit
+        vm.prank(keeper);
+        strategy.report();
+
+        // There should be loose Aura in the strategy.
+        assertGt(ERC20(aura).balanceOf(address(strategy)), 0);
+
+        vm.prank(management);
+        strategy.setTradeFactory(address(mockTradeFactory));
+
+        assertEq(strategy.tradeFactory(), address(mockTradeFactory));
+        assertEq(mockTradeFactory.strategy(), address(strategy));
+        assertTrue(mockTradeFactory.enabled());
+        assertEq(
+            ERC20(aura).allowance(address(strategy), address(mockTradeFactory)),
+            type(uint256).max
+        );
+
+        // Make sure it can pull tokens
+        assertGt(ERC20(aura).balanceOf(address(strategy)), 0);
+        assertEq(ERC20(aura).balanceOf(address(mockTradeFactory)), 0);
+
+        mockTradeFactory.pull();
+
+        // There should be no more Aura in the strategy.
+        assertEq(ERC20(aura).balanceOf(address(strategy)), 0);
+        assertGt(ERC20(aura).balanceOf(address(mockTradeFactory)), 0);
+
+        vm.prank(management);
+        strategy.setTradeFactory(address(0));
+
+        assertEq(strategy.tradeFactory(), address(0));
+        assertEq(
+            ERC20(aura).allowance(address(strategy), address(mockTradeFactory)),
+            0
+        );
+    }
+
     function test_profitableReport_withFees(
         uint256 _amount,
         uint16 _profitFactor
@@ -115,6 +188,9 @@ contract OperationTest is Setup {
         _profitFactor = uint16(
             bound(uint256(_profitFactor), 10, MAX_BPS - 100)
         );
+
+        vm.prank(management);
+        strategy.setProfitLimitRatio(10_000);
 
         // Set protocol fee to 0 and perf fee to 10%
         setFees(0, 1_000);

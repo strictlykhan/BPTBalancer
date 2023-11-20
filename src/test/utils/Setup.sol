@@ -12,6 +12,8 @@ import {SingleSidedBalancerFactory} from "../../SingleSidedBalancerFactory.sol";
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 
+import {MockTradeFactory} from "../Mocks/MockTradeFactory.sol";
+
 interface IFactory {
     function governance() external view returns (address);
 
@@ -26,6 +28,10 @@ contract Setup is ExtendedTest, IEvents {
     IStrategyInterface public strategy;
     SingleSidedBalancerFactory public strategyFactory;
 
+    MockTradeFactory public mockTradeFactory;
+
+    address internal constant bal = 0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3;
+    address internal constant aura = 0x1509706a6c66CA549ff0cB464de88231DDBe213B;
     address public pool = 0xcd78A20c597E367A4e478a2411cEB790604D7c8F;
     address public rewardsContract = 0x39EE6Fb813052E67260A3F95D3739B336aABD2C6;
     uint256 public maxSingleTrade = 1e25;
@@ -71,6 +77,8 @@ contract Setup is ExtendedTest, IEvents {
         strategy = IStrategyInterface(setUpStrategy());
 
         factory = strategy.FACTORY();
+
+        mockTradeFactory = new MockTradeFactory();
 
         // label all the used addresses for traces
         vm.label(keeper, "keeper");

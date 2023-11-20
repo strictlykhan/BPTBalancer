@@ -12,9 +12,9 @@ import {IBalancerVault, IERC20} from "./interfaces/Balancer/IBalancerVault.sol";
 import {IConvexRewards} from "./interfaces/Convex/IConvexRewards.sol";
 import {IRewardPoolDepositWrapper} from "./interfaces/Convex/IRewardPoolDepositWrapper.sol";
 
-// TODO:
-// 2. Add that to deposits
-//  3. Be able to pull Aura token
+interface ITradeFactory {
+    function enable(address, address) external;
+}
 
 /// @title Single Sided Balancer Tokenized Strategy.
 /// @dev This is built to be used with a Composable Stable Pool
@@ -67,9 +67,9 @@ contract SingleSidedBalancer is BaseHealthCheck {
     bytes32 public immutable poolId;
     // The length of the array of tokens the lp uses.
     // This is inclusive of the BPT token.
-    uint256 internal immutable length;
+    uint256 internal immutable numberOfTokens;
     // The index in the tokens array our `asset` sits at.
-    uint256 internal immutable spot;
+    uint256 internal immutable index;
     // Difference in decimals between asset and BPT(1e18).
     uint256 internal immutable scaler;
 
@@ -77,6 +77,8 @@ contract SingleSidedBalancer is BaseHealthCheck {
 
     // The array of lp tokens all cast into the IAsset interface.
     IAsset[] internal tokens;
+    // Address that will handle selling the Aura tokens.
+    address public tradeFactory;
     // The max in asset we will deposit or withdraw at a time.
     uint256 public maxSingleTrade;
     // The amount in asset that will trigger a tend if idle.
@@ -101,15 +103,17 @@ contract SingleSidedBalancer is BaseHealthCheck {
             .getPoolTokens(poolId);
 
         // Set the length of the array.
-        length = _tokens.length;
-        // Store them all as IAsset and find the spot the asset is.
-        (tokens, spot) = _setTokensAndSpot(_tokens);
+        numberOfTokens = _tokens.length;
+        // Store them all as IAsset and find the index the asset is.
+        (tokens, index) = _setTokensAndIndex(_tokens);
 
         // Amount to scale up or down from asset -> BPT token.
         scaler = 10 ** (ERC20(pool).decimals() - asset.decimals());
 
         // Allow for 1% loss.
         _setLossLimitRatio(100);
+        // Only allow a 10% gain.
+        _setProfitLimitRatio(1_000);
 
         // Max approvals.
         asset.safeApprove(depositWrapper, type(uint256).max);
@@ -123,15 +127,15 @@ contract SingleSidedBalancer is BaseHealthCheck {
         maxTendBasefee = 100e9;
     }
 
-    function _setTokensAndSpot(
+    function _setTokensAndIndex(
         IERC20[] memory _tokens
-    ) internal view returns (IAsset[] memory tokens_, uint256 _spot) {
-        tokens_ = new IAsset[](length);
+    ) internal view returns (IAsset[] memory tokens_, uint256 _index) {
+        tokens_ = new IAsset[](numberOfTokens);
 
-        for (uint256 i = 0; i < length; ++i) {
+        for (uint256 i = 0; i < numberOfTokens; ++i) {
             tokens_[i] = IAsset(address(_tokens[i]));
             if (_tokens[i] == IERC20(address(asset))) {
-                _spot = i;
+                _index = i;
             }
         }
     }
@@ -160,15 +164,15 @@ contract SingleSidedBalancer is BaseHealthCheck {
     function _depositAndStake(uint256 _amount) internal {
         if (_amount == 0) return;
 
-        IAsset[] memory _assets = new IAsset[](length);
-        uint256[] memory _maxAmountsIn = new uint256[](length);
+        IAsset[] memory _assets = new IAsset[](numberOfTokens);
+        uint256[] memory _maxAmountsIn = new uint256[](numberOfTokens);
 
         _assets = tokens;
-        _maxAmountsIn[spot] = _amount;
+        _maxAmountsIn[index] = _amount;
 
         // Amounts array without the bpt token
-        uint256[] memory amountsIn = new uint256[](length - 1);
-        amountsIn[spot] = _amount;
+        uint256[] memory amountsIn = new uint256[](numberOfTokens - 1);
+        amountsIn[index] = _amount;
 
         bytes memory data = abi.encode(
             IBalancerVault.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT,
@@ -221,18 +225,20 @@ contract SingleSidedBalancer is BaseHealthCheck {
             totalLpBalance()
         );
 
+        if (_amountBpt == 0) return;
+
         _withdrawLP(Math.min(_amountBpt, balanceOfStake()));
 
-        IAsset[] memory _assets = new IAsset[](length);
+        IAsset[] memory _assets = new IAsset[](numberOfTokens);
         // We don't enforce any min amount out since withdrawer's can use `maxLoss`
-        uint256[] memory _minAmountsOut = new uint256[](length);
+        uint256[] memory _minAmountsOut = new uint256[](numberOfTokens);
 
         _assets = tokens;
 
         bytes memory data = abi.encode(
             IBalancerVault.ExitKind.EXACT_BPT_IN_FOR_ONE_TOKEN_OUT,
             _amountBpt,
-            spot
+            index
         );
 
         IBalancerVault.ExitPoolRequest memory _request = IBalancerVault
@@ -356,18 +362,14 @@ contract SingleSidedBalancer is BaseHealthCheck {
         IConvexRewards(rewardsContract).withdrawAndUnwrap(amount, false);
     }
 
-    function _claimAndSellRewards() internal {
-        _getReward();
-        _swapRewardTokens();
-    }
-
     /**
      * @notice
-     *   Overwritten main function to sell bal and aura with batchSwap
-     *   function used internally to sell the available Bal and Aura tokens
-     *   We sell bal/Aura -> WETH -> toSwapTo
+     *
      */
-    function _swapRewardTokens() internal {
+    function _claimAndSellRewards() internal {
+        // Claim all the pending rewards.
+        _getReward();
+
         uint256 balBalance = ERC20(bal).balanceOf(address(this));
         //Cant swap 0
         if (balBalance == 0) return;
@@ -514,10 +516,29 @@ contract SingleSidedBalancer is BaseHealthCheck {
         }
     }
 
+    // Set the trade factory to dump Aura.
+    function setTradeFactory(address _tradeFactory) external onlyManagement {
+        // If there is already a TF set. Remove its allowance.
+        if (tradeFactory != address(0)) {
+            ERC20(aura).safeApprove(tradeFactory, 0);
+        }
+
+        // If we are not removing it.
+        if (_tradeFactory != address(0)) {
+            // Enable and approve.
+            ITradeFactory(_tradeFactory).enable(aura, address(asset));
+            ERC20(aura).safeApprove(_tradeFactory, type(uint256).max);
+        }
+
+        // Update the address.
+        tradeFactory = _tradeFactory;
+    }
+
     // Can also be used to pause deposits.
     function setMaxSingleTrade(
         uint256 _maxSingleTrade
     ) external onlyEmergencyAuthorized {
+        require(_maxSingleTrade != type(uint256).max, "cannot be max");
         maxSingleTrade = _maxSingleTrade;
     }
 
@@ -546,14 +567,23 @@ contract SingleSidedBalancer is BaseHealthCheck {
         _freeFunds(_amount);
     }
 
-    function swapAura(
-        uint256 _amountOfAsset,
-        uint256 _amountOfAura
-    ) external onlyKeepers {
-        require(_amountOfAsset != 0, "cant swap with 0");
-        _getReward();
-        asset.safeTransferFrom(msg.sender, address(this), _amountOfAsset);
-        ERC20(aura).safeTransfer(msg.sender, _amountOfAura);
+    /**
+     * @dev Internal safe function to make sure the contract you want to
+     * interact with has enough allowance to pull the desired tokens.
+     *
+     * @param _contract The address of the contract that will move the token.
+     * @param _token The ERC-20 token that will be getting spent.
+     * @param _amount The amount of `_token` to be spent.
+     */
+    function _checkAllowance(
+        address _contract,
+        address _token,
+        uint256 _amount
+    ) internal {
+        if (ERC20(_token).allowance(address(this), _contract) < _amount) {
+            ERC20(_token).approve(_contract, 0);
+            ERC20(_token).approve(_contract, _amount);
+        }
     }
 
     /**

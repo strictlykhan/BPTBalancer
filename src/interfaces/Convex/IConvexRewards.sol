@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: Unlicense
-pragma solidity ^0.8.12;
+pragma solidity 0.8.18;
 
 interface IConvexRewards {
     // strategy's staked balance in the synthetix staking contract
