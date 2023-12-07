@@ -85,6 +85,10 @@ contract SingleSidedBalancer is BaseHealthCheck {
     uint256 public depositTrigger;
     // The max amount the base fee can be for a tend to happen.
     uint256 public maxTendBasefee;
+    // Minimum time between deposits to wait.
+    uint256 public minDepositInterval;
+    // Time stamp of the last deployment of funds.
+    uint256 public lastDeposit;
     // Amount in Basis Points to allow for slippage on deposits.
     uint256 public slippage;
 
@@ -127,8 +131,10 @@ contract SingleSidedBalancer is BaseHealthCheck {
         depositTrigger = _maxSingleTrade / 2;
         // Default max tend fee to 100 gwei.
         maxTendBasefee = 100e9;
-        // Default slippage to 5%.
-        slippage = 500;
+        // Default min deposit interval to 6 hours.
+        minDepositInterval = 60 * 60 * 6;
+        // Default slippage to 1%.
+        slippage = 100;
     }
 
     function _setTokensAndIndex(
@@ -199,6 +205,9 @@ contract SingleSidedBalancer is BaseHealthCheck {
             poolId,
             _request
         );
+
+        // Update the last time that we deposited.
+        lastDeposit = block.timestamp;
     }
 
     /**
@@ -461,7 +470,10 @@ contract SingleSidedBalancer is BaseHealthCheck {
      * @return . Should return true if tend() should be called by keeper or false if not.
      */
     function _tendTrigger() internal view override returns (bool) {
-        if (asset.balanceOf(address(this)) > depositTrigger) {
+        if (
+            block.timestamp - lastDeposit > minDepositInterval &&
+            asset.balanceOf(address(this)) > depositTrigger
+        ) {
             return block.basefee < maxTendBasefee;
         }
     }
@@ -565,6 +577,15 @@ contract SingleSidedBalancer is BaseHealthCheck {
     // Set the slippage for deposits.
     function setSlippage(uint256 _slippage) external onlyManagement {
         slippage = _slippage;
+    }
+
+    // Set the minimum deposit wait time.
+    function setDepositInterval(
+        uint256 _newDepositInterval
+    ) external onlyManagement {
+        // Cannot set to 0.
+        require(_newDepositInterval > 0, "interval too low");
+        minDepositInterval = _newDepositInterval;
     }
 
     // Manually pull funds out from the lp without shuting down.
