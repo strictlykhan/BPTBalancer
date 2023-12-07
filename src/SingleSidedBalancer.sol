@@ -85,6 +85,8 @@ contract SingleSidedBalancer is BaseHealthCheck {
     uint256 public depositTrigger;
     // The max amount the base fee can be for a tend to happen.
     uint256 public maxTendBasefee;
+    // Amount in Basis Points to allow for slippage on deposits.
+    uint256 public slippage;
 
     constructor(
         address _asset,
@@ -125,6 +127,8 @@ contract SingleSidedBalancer is BaseHealthCheck {
         depositTrigger = _maxSingleTrade / 2;
         // Default max tend fee to 100 gwei.
         maxTendBasefee = 100e9;
+        // Default slippage to 5%.
+        slippage = 500;
     }
 
     function _setTokensAndIndex(
@@ -177,7 +181,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
         bytes memory data = abi.encode(
             IBalancerVault.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT,
             amountsIn,
-            0
+            _getMinBPTOut(_amount)
         );
 
         IBalancerVault.JoinPoolRequest memory _request = IBalancerVault
@@ -312,6 +316,13 @@ contract SingleSidedBalancer is BaseHealthCheck {
      */
     function fromBptToAsset(uint256 _amount) public view returns (uint256) {
         return (_amount * IBalancerPool(pool).getRate()) / 1e18 / scaler;
+    }
+
+    /**
+     * @notice Get the min BPT tokens out with a slippage buffer
+     */
+    function _getMinBPTOut(uint256 _amountIn) internal view returns (uint256) {
+        return (fromAssetToBpt(_amountIn) * (MAX_BPS - slippage)) / MAX_BPS;
     }
 
     /**
@@ -479,12 +490,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
     function availableDepositLimit(
         address /*_owner*/
     ) public view override returns (uint256) {
-        // Cannot deposit during Balancer Vault reentrancy.
-        if (_isNotReentered()) {
-            return maxSingleTrade;
-        } else {
-            return 0;
-        }
+        return maxSingleTrade;
     }
 
     /**
@@ -556,6 +562,11 @@ contract SingleSidedBalancer is BaseHealthCheck {
         depositTrigger = _depositTrigger;
     }
 
+    // Set the slippage for deposits.
+    function setSlippage(uint256 _slippage) external onlyManagement {
+        slippage = _slippage;
+    }
+
     // Manually pull funds out from the lp without shuting down.
     // This will also stop new deposits and withdraws that would pull from the LP.
     // Can call tend after this to update internal balances.
@@ -565,25 +576,6 @@ contract SingleSidedBalancer is BaseHealthCheck {
         maxSingleTrade = 0;
         depositTrigger = type(uint256).max;
         _freeFunds(_amount);
-    }
-
-    /**
-     * @dev Internal safe function to make sure the contract you want to
-     * interact with has enough allowance to pull the desired tokens.
-     *
-     * @param _contract The address of the contract that will move the token.
-     * @param _token The ERC-20 token that will be getting spent.
-     * @param _amount The amount of `_token` to be spent.
-     */
-    function _checkAllowance(
-        address _contract,
-        address _token,
-        uint256 _amount
-    ) internal {
-        if (ERC20(_token).allowance(address(this), _contract) < _amount) {
-            ERC20(_token).approve(_contract, 0);
-            ERC20(_token).approve(_contract, _amount);
-        }
     }
 
     /**

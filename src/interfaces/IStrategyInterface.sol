@@ -12,6 +12,8 @@ interface IStrategyInterface is IBaseHealthCheck {
 
     function depositTrigger() external view returns (uint256);
 
+    function slippage() external view returns (uint256);
+
     function fromAssetToBpt(uint256 _amount) external view returns (uint256);
 
     function fromBptToAsset(uint256 _amount) external view returns (uint256);
@@ -29,6 +31,8 @@ interface IStrategyInterface is IBaseHealthCheck {
     function setMaxTendBasefee(uint256 _maxTendBasefee) external;
 
     function setDepositTrigger(uint256 _depositTrigger) external;
+
+    function setSlippage(uint256 _slippage) external;
 
     function manualWithdraw(uint256 _amount) external;
 }
