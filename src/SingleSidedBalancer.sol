@@ -233,10 +233,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
      */
     function _freeFunds(uint256 _amount) internal override {
         // Get the rate of asset to token.
-        uint256 _amountBpt = Math.min(
-            fromAssetToBpt(_amount),
-            totalLpBalance()
-        );
+        uint256 _amountBpt = _bptToBurn(_amount);
 
         if (_amountBpt == 0) return;
 
@@ -309,6 +306,20 @@ contract SingleSidedBalancer is BaseHealthCheck {
         _totalAssets =
             asset.balanceOf(address(this)) +
             fromBptToAsset(totalLpBalance());
+
+        // Get the current total assets in the strategy.
+        uint256 currentAssets = TokenizedStrategy.totalAssets();
+
+        // If we have a profit.
+        if (_totalAssets > currentAssets) {
+            // Adjust the profit down by the expected slippage it takes to get out.
+            // So we don't over promise.
+            _totalAssets =
+                currentAssets +
+                //
+                (((_totalAssets - currentAssets) * (MAX_BPS - slippage)) /
+                    MAX_BPS);
+        }
     }
 
     /**
@@ -332,6 +343,22 @@ contract SingleSidedBalancer is BaseHealthCheck {
      */
     function _getMinBPTOut(uint256 _amountIn) internal view returns (uint256) {
         return (fromAssetToBpt(_amountIn) * (MAX_BPS - slippage)) / MAX_BPS;
+    }
+
+    /**
+     * @notice
+     *   Get the proportional amount of lp tokens to burn for the amount of underlying asset
+     *    that is being withdrawn.
+     */
+    function _bptToBurn(
+        uint256 _underlyingAmount
+    ) internal view returns (uint256 _toBurn) {
+        uint256 _lpBalance = totalLpBalance();
+
+        _toBurn = Math.min(
+            (_lpBalance * _underlyingAmount) / TokenizedStrategy.totalDebt(),
+            _lpBalance
+        );
     }
 
     /**
@@ -373,7 +400,7 @@ contract SingleSidedBalancer is BaseHealthCheck {
 
     /**
      * @notice
-     *   Internal function to un-stake tokens from Convex
+     *   Internal function to un-stake tokens from Aura
      *   harvest Extras will determine if we claim rewards, normally should be true
      */
     function _withdrawLP(uint256 amount) internal {
