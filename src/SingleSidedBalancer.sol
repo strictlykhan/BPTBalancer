@@ -116,8 +116,8 @@ contract SingleSidedBalancer is BaseHealthCheck {
         // Amount to scale up or down from asset -> BPT token.
         scaler = 10 ** (ERC20(pool).decimals() - asset.decimals());
 
-        // Allow for 1% loss.
-        _setLossLimitRatio(100);
+        // Allow for .1% loss.
+        _setLossLimitRatio(10);
         // Only allow a 10% gain.
         _setProfitLimitRatio(1_000);
 
@@ -306,20 +306,6 @@ contract SingleSidedBalancer is BaseHealthCheck {
         _totalAssets =
             asset.balanceOf(address(this)) +
             fromBptToAsset(totalLpBalance());
-
-        // Get the current total assets in the strategy.
-        uint256 currentAssets = TokenizedStrategy.totalAssets();
-
-        // If we have a profit.
-        if (_totalAssets > currentAssets) {
-            // Adjust the profit down by the expected slippage it takes to get out.
-            // So we don't over promise.
-            _totalAssets =
-                currentAssets +
-                //
-                (((_totalAssets - currentAssets) * (MAX_BPS - slippage)) /
-                    MAX_BPS);
-        }
     }
 
     /**
