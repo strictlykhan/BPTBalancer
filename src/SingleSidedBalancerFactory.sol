@@ -16,7 +16,7 @@ contract SingleSidedBalancerFactory {
     address public keeper;
 
     /// @notice Track the deployments. asset => pool => strategy
-    mapping(address => mapping(address => address)) deployments;
+    mapping(address => mapping(address => address)) public deployments;
 
     /**
      * @notice Emitted when a new strategy is deployed
