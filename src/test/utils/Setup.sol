@@ -107,6 +107,9 @@ contract Setup is ExtendedTest, IEvents {
         vm.prank(management);
         _strategy.setMaxTendBasefee(type(uint256).max);
 
+        vm.prank(management);
+        _strategy.setOpen(true);
+
         return address(_strategy);
     }
 

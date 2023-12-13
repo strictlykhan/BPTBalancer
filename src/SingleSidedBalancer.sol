@@ -91,6 +91,10 @@ contract SingleSidedBalancer is BaseHealthCheck {
     uint256 public lastDeposit;
     // Amount in Basis Points to allow for slippage on deposits.
     uint256 public slippage;
+    // Bool if the strategy is open for any depositors.
+    bool public open;
+    // Mapping of addresses allowed to deposit.
+    mapping(address => bool) public allowed;
 
     constructor(
         address _asset,
@@ -513,9 +517,16 @@ contract SingleSidedBalancer is BaseHealthCheck {
      * @return . The available amount the `_owner` can deposit in terms of `asset`
      */
     function availableDepositLimit(
-        address /*_owner*/
+        address _owner
     ) public view override returns (uint256) {
-        return maxSingleTrade;
+        // If the owner is whitelisted or the strategy is open.
+        if (allowed[_owner] || open) {
+            // Allow the max of a single deposit.
+            return maxSingleTrade;
+        } else {
+            // Otherwise they cannot deposit.
+            return 0;
+        }
     }
 
     /**
@@ -599,6 +610,19 @@ contract SingleSidedBalancer is BaseHealthCheck {
         // Cannot set to 0.
         require(_newDepositInterval > 0, "interval too low");
         minDepositInterval = _newDepositInterval;
+    }
+
+    // Change if anyone can deposit in or only white listed addresses
+    function setOpen(bool _open) external onlyManagement {
+        open = _open;
+    }
+
+    // Set or update an addresses whitelist status.
+    function setAllowed(
+        address _address,
+        bool _allowed
+    ) external onlyManagement {
+        allowed[_address] = _allowed;
     }
 
     // Manually pull funds out from the lp without shuting down.

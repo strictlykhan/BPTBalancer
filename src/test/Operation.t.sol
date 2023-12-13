@@ -19,6 +19,20 @@ contract OperationTest is Setup {
         // TODO: add additional check on strat params
     }
 
+    function test_deployment() public {
+        assertTrue(strategyFactory.isDeployedStrategy(address(strategy)));
+
+        // Shouldn't be able to redeploy the same strategy
+        vm.expectRevert();
+        strategyFactory.newSingleSidedBalancer(
+            address(asset),
+            "Tokenized Strategy",
+            pool,
+            rewardsContract,
+            maxSingleTrade
+        );
+    }
+
     function test_operation(uint256 _amount) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
 
@@ -27,6 +41,52 @@ contract OperationTest is Setup {
 
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
+
+        checkStrategyTotals(strategy, _amount, 0, _amount);
+
+        (bool trigger, ) = strategy.tendTrigger();
+        assertTrue(trigger);
+
+        vm.prank(keeper);
+        strategy.tend();
+
+        checkStrategyTotals(strategy, _amount, _amount, 0);
+
+        // Earn Interest
+        skip(1 days);
+
+        uint256 balanceBefore = asset.balanceOf(user);
+
+        // Withdraw all funds
+        vm.prank(user);
+        strategy.redeem(_amount, user, user);
+
+        assertRelApproxEq(asset.balanceOf(user), balanceBefore + _amount, 10);
+    }
+
+    function test_whitelist(uint256 _amount) public {
+        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
+        vm.prank(management);
+        strategy.setDepositTrigger(_amount - 1);
+
+        vm.prank(management);
+        strategy.setOpen(false);
+
+        airdrop(asset, user, _amount);
+        vm.prank(user);
+        asset.approve(address(strategy), _amount);
+
+        // Cant deposit
+        vm.expectRevert("ERC4626: deposit more than max");
+        vm.prank(user);
+        strategy.deposit(_amount, user);
+
+        vm.prank(management);
+        strategy.setAllowed(user, true);
+
+        // Deposit into strategy
+        vm.prank(user);
+        strategy.deposit(_amount, user);
 
         checkStrategyTotals(strategy, _amount, 0, _amount);
 
