@@ -24,77 +24,20 @@ contract OperationTest is Setup {
 
         // Shouldn't be able to redeploy the same strategy
         vm.expectRevert();
-        strategyFactory.newSingleSidedBalancer(
+        strategyFactory.newBPTBalancer(
+            "Tokenized Balancer Strategy",
             address(asset),
-            "Tokenized Strategy",
-            pool,
-            rewardsContract,
-            maxSingleTrade
+            auraRewardsContract,
+            rewardsTargetsPools,
+            illiquidReward
         );
     }
 
     function test_operation(uint256 _amount) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
 
-        vm.prank(management);
-        strategy.setDepositTrigger(_amount - 1);
-
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
-
-        checkStrategyTotals(strategy, _amount, 0, _amount);
-
-        (bool trigger, ) = strategy.tendTrigger();
-        assertTrue(trigger);
-
-        vm.prank(keeper);
-        strategy.tend();
-
-        checkStrategyTotals(strategy, _amount, _amount, 0);
-
-        // Earn Interest
-        skip(1 days);
-
-        uint256 balanceBefore = asset.balanceOf(user);
-
-        // Withdraw all funds
-        vm.prank(user);
-        strategy.redeem(_amount, user, user);
-
-        assertRelApproxEq(asset.balanceOf(user), balanceBefore + _amount, 10);
-    }
-
-    function test_whitelist(uint256 _amount) public {
-        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
-        vm.prank(management);
-        strategy.setDepositTrigger(_amount - 1);
-
-        vm.prank(management);
-        strategy.setOpen(false);
-
-        airdrop(asset, user, _amount);
-        vm.prank(user);
-        asset.approve(address(strategy), _amount);
-
-        // Cant deposit
-        vm.expectRevert("ERC4626: deposit more than max");
-        vm.prank(user);
-        strategy.deposit(_amount, user);
-
-        vm.prank(management);
-        strategy.setAllowed(user, true);
-
-        // Deposit into strategy
-        vm.prank(user);
-        strategy.deposit(_amount, user);
-
-        checkStrategyTotals(strategy, _amount, 0, _amount);
-
-        (bool trigger, ) = strategy.tendTrigger();
-        assertTrue(trigger);
-
-        vm.prank(keeper);
-        strategy.tend();
 
         checkStrategyTotals(strategy, _amount, _amount, 0);
 
@@ -122,19 +65,8 @@ contract OperationTest is Setup {
         vm.prank(management);
         strategy.setProfitLimitRatio(10_000);
 
-        vm.prank(management);
-        strategy.setDepositTrigger(_amount - 1);
-
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
-
-        checkStrategyTotals(strategy, _amount, 0, _amount);
-
-        (bool trigger, ) = strategy.tendTrigger();
-        assertTrue(trigger);
-
-        vm.prank(keeper);
-        strategy.tend();
 
         checkStrategyTotals(strategy, _amount, _amount, 0);
 
@@ -170,74 +102,53 @@ contract OperationTest is Setup {
         }
     }
 
-    function test_setTradeFactory(uint256 _amount) public {
+    function test_profitableReportRewards(
+        uint256 _amount,
+        uint16 _profitFactor
+    ) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
+        _profitFactor = uint16(
+            bound(uint256(_profitFactor), 10, MAX_BPS - 100)
+        );
 
         vm.prank(management);
-        strategy.setDoHealthCheck(false);
-
-        assertEq(strategy.tradeFactory(), address(0));
-        assertTrue(!mockTradeFactory.enabled());
-
-        vm.expectRevert("!management");
-        vm.prank(user);
-        strategy.setTradeFactory(address(mockTradeFactory));
-
-        vm.prank(management);
-        strategy.setDepositTrigger(_amount - 1);
+        strategy.setProfitLimitRatio(10_000);
 
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
-        checkStrategyTotals(strategy, _amount, 0, _amount);
-
-        (bool trigger, ) = strategy.tendTrigger();
-        assertTrue(trigger);
-
-        vm.prank(keeper);
-        strategy.tend();
-
         checkStrategyTotals(strategy, _amount, _amount, 0);
 
         // Earn Interest
-        skip(10 days);
+        skip(50 days);
+
+        //uint256 toAirdrop = (_amount * _profitFactor) / MAX_BPS;
+        //airdrop(asset, address(strategy), toAirdrop);
 
         // Report profit
         vm.prank(keeper);
-        strategy.report();
+        (uint256 profit, uint256 loss) = strategy.report();
 
-        // There should be loose Aura in the strategy.
-        assertGt(ERC20(aura).balanceOf(address(strategy)), 0);
+        // Check return Values
+        assertGt(profit, 0, "!profit");
+        assertEq(loss, 0, "!loss");
 
-        vm.prank(management);
-        strategy.setTradeFactory(address(mockTradeFactory));
+        skip(strategy.profitMaxUnlockTime());
 
-        assertEq(strategy.tradeFactory(), address(mockTradeFactory));
-        assertEq(mockTradeFactory.strategy(), address(strategy));
-        assertTrue(mockTradeFactory.enabled());
-        assertEq(
-            ERC20(aura).allowance(address(strategy), address(mockTradeFactory)),
-            type(uint256).max
-        );
+        uint256 balanceBefore = asset.balanceOf(user);
 
-        // Make sure it can pull tokens
-        assertGt(ERC20(aura).balanceOf(address(strategy)), 0);
-        assertEq(ERC20(aura).balanceOf(address(mockTradeFactory)), 0);
+        // Withdraw all funds
+        vm.prank(user);
+        strategy.redeem(_amount, user, user);
 
-        mockTradeFactory.pull();
-
-        // There should be no more Aura in the strategy.
-        assertEq(ERC20(aura).balanceOf(address(strategy)), 0);
-        assertGt(ERC20(aura).balanceOf(address(mockTradeFactory)), 0);
-
-        vm.prank(management);
-        strategy.setTradeFactory(address(0));
-
-        assertEq(strategy.tradeFactory(), address(0));
-        assertEq(
-            ERC20(aura).allowance(address(strategy), address(mockTradeFactory)),
-            0
-        );
+        // Make sure we either ended in profit or barely below
+        if (asset.balanceOf(user) < balanceBefore + _amount) {
+            assertRelApproxEq(
+                asset.balanceOf(user),
+                balanceBefore + _amount,
+                10
+            );
+        }
     }
 
     function test_profitableReport_withFees(
@@ -255,19 +166,8 @@ contract OperationTest is Setup {
         // Set protocol fee to 0 and perf fee to 10%
         setFees(0, 1_000);
 
-        vm.prank(management);
-        strategy.setDepositTrigger(_amount - 1);
-
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
-
-        checkStrategyTotals(strategy, _amount, 0, _amount);
-
-        (bool trigger, ) = strategy.tendTrigger();
-        assertTrue(trigger);
-
-        vm.prank(keeper);
-        strategy.tend();
 
         checkStrategyTotals(strategy, _amount, _amount, 0);
 
@@ -327,40 +227,42 @@ contract OperationTest is Setup {
         }
     }
 
-    function test_tendTrigger(uint256 _amount) public {
+    function test_auraRewards(
+        uint256 _amount,
+        uint16 _profitFactor
+    ) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
+        _profitFactor = uint16(
+            bound(uint256(_profitFactor), 10, MAX_BPS - 100)
+        );
 
-        (bool trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
+        vm.prank(management);
+        strategy.setProfitLimitRatio(10_000);
 
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
+        checkStrategyTotals(strategy, _amount, _amount, 0);
 
-        // Skip some time
-        skip(1 days);
+        assertEq(ERC20(aura).balanceOf(address(strategy)), 0, "aura in strategy");
+        // Earn Interest
+        skip(50 days);
 
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
-
+        // Report profit
         vm.prank(keeper);
-        strategy.report();
+        (uint256 profit, uint256 loss) = strategy.report();
 
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
+        // Check return Values
+        assertGt(profit, 0, "!profit");
+        assertEq(loss, 0, "!loss");
 
-        // Unlock Profits
-        skip(strategy.profitMaxUnlockTime());
+        assertGt(ERC20(aura).balanceOf(address(strategy)), 100, "!aura");
 
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
+        vm.prank(management);
+        strategy.claimIlliquidReward(management);
+        assertEq(ERC20(aura).balanceOf(address(strategy)), 0, "!aura");
+        assertGt(ERC20(aura).balanceOf(management), 100, "!aura");
 
-        vm.prank(user);
-        strategy.redeem(_amount, user, user);
-
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
     }
+
 }

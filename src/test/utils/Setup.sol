@@ -4,15 +4,13 @@ pragma solidity 0.8.18;
 import "forge-std/console.sol";
 import {ExtendedTest} from "./ExtendedTest.sol";
 
-import {SingleSidedBalancer, ERC20} from "../../SingleSidedBalancer.sol";
+import {BPTBalancer, ERC20} from "../../BPTBalancer.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
 
-import {SingleSidedBalancerFactory} from "../../SingleSidedBalancerFactory.sol";
+import {BPTBalancerFactory} from "../../BPTBalancerFactory.sol";
 
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
-
-import {MockTradeFactory} from "../Mocks/MockTradeFactory.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -26,15 +24,14 @@ contract Setup is ExtendedTest, IEvents {
     // Contract instances that we will use repeatedly.
     ERC20 public asset;
     IStrategyInterface public strategy;
-    SingleSidedBalancerFactory public strategyFactory;
-
-    MockTradeFactory public mockTradeFactory;
+    BPTBalancerFactory public strategyFactory;
 
     address internal constant bal = 0x9a71012B13CA4d3D0Cdc72A177DF3ef03b0E76A3;
     address internal constant aura = 0x1509706a6c66CA549ff0cB464de88231DDBe213B;
-    address public pool = 0xcd78A20c597E367A4e478a2411cEB790604D7c8F;
-    address public rewardsContract = 0x39EE6Fb813052E67260A3F95D3739B336aABD2C6;
-    uint256 public maxSingleTrade = 1e25;
+    address internal constant stader = 0x1d734A02eF1e1f5886e66b0673b71Af5B53ffA94;
+    address public auraRewardsContract;
+    address[3][] public rewardsTargetsPools;
+    address public illiquidReward;
 
     mapping(string => address) public tokenAddrs;
 
@@ -52,7 +49,7 @@ contract Setup is ExtendedTest, IEvents {
     uint256 public MAX_BPS = 10_000;
 
     // Fuzz from $0.01 of 1e6 stable coins up to 1 trillion of a 1e18 coin
-    uint256 public maxFuzzAmount = 1e24;
+    uint256 public maxFuzzAmount = 1e22;
     uint256 public minFuzzAmount = 100e18;
 
     // Default profit max unlock time is set for 10 days
@@ -61,14 +58,29 @@ contract Setup is ExtendedTest, IEvents {
     function setUp() public virtual {
         _setTokenAddrs();
 
-        strategyFactory = new SingleSidedBalancerFactory(
+        strategyFactory = new BPTBalancerFactory(
             management,
             performanceFeeRecipient,
             keeper
         );
 
         // Set asset
-        asset = ERC20(tokenAddrs["WMATIC"]);
+        asset = ERC20(0xcd78A20c597E367A4e478a2411cEB790604D7c8F);
+        auraRewardsContract = 0x39EE6Fb813052E67260A3F95D3739B336aABD2C6;
+        
+        rewardsTargetsPools.push([
+            bal,
+            tokenAddrs["WMATIC"],
+            0x0297e37f1873D2DAb4487Aa67cD56B58E2F27875]
+        );
+
+        rewardsTargetsPools.push([
+            stader,
+            tokenAddrs["MATICX"],
+            0x577f6076E558818A5dF21Ce4acdE9A9623eC0b4c]
+        );
+        
+        illiquidReward = aura;
 
         // Set decimals
         decimals = asset.decimals();
@@ -77,8 +89,6 @@ contract Setup is ExtendedTest, IEvents {
         strategy = IStrategyInterface(setUpStrategy());
 
         factory = strategy.FACTORY();
-
-        mockTradeFactory = new MockTradeFactory();
 
         // label all the used addresses for traces
         vm.label(keeper, "keeper");
@@ -92,23 +102,17 @@ contract Setup is ExtendedTest, IEvents {
     function setUpStrategy() public returns (address) {
         // we save the strategy as a IStrategyInterface to give it the needed interface
         IStrategyInterface _strategy = IStrategyInterface(
-            strategyFactory.newSingleSidedBalancer(
+            strategyFactory.newBPTBalancer(
+                "Tokenized Balancer Strategy",
                 address(asset),
-                "Tokenized Strategy",
-                pool,
-                rewardsContract,
-                maxSingleTrade
+                auraRewardsContract,
+                rewardsTargetsPools,
+                illiquidReward
             )
         );
 
         vm.prank(management);
         _strategy.acceptManagement();
-
-        vm.prank(management);
-        _strategy.setMaxTendBasefee(type(uint256).max);
-
-        vm.prank(management);
-        _strategy.setOpen(true);
 
         return address(_strategy);
     }
@@ -175,5 +179,6 @@ contract Setup is ExtendedTest, IEvents {
         tokenAddrs["DAI"] = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
         tokenAddrs["USDC"] = 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174;
         tokenAddrs["WMATIC"] = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
+        tokenAddrs["MATICX"] = 0xfa68FB4628DFF1028CFEc22b4162FCcd0d45efb6;
     }
 }

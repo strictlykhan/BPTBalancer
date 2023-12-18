@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity 0.8.18;
 
-import {SingleSidedBalancer} from "./SingleSidedBalancer.sol";
+import {BPTBalancer} from "./BPTBalancer.sol";
 import {IStrategyInterface} from "./interfaces/IStrategyInterface.sol";
 
-contract SingleSidedBalancerFactory {
+contract BPTBalancerFactory {
     /// @notice Revert message for when a strategy has already been deployed.
     error AlreadyDeployed(address _strategy);
 
@@ -15,8 +15,8 @@ contract SingleSidedBalancerFactory {
     /// @notice Address of the keeper bot
     address public keeper;
 
-    /// @notice Track the deployments. asset => pool => strategy
-    mapping(address => mapping(address => address)) public deployments;
+    /// @notice Track the deployments. asset => strategy
+    mapping(address => address) public deployments;
 
     /**
      * @notice Emitted when a new strategy is deployed
@@ -36,38 +36,32 @@ contract SingleSidedBalancerFactory {
     }
 
     function name() external pure returns (string memory) {
-        return "Single Sided Balancer Factory";
+        return "Balancer Strategy Factory";
     }
 
     /**
      * @notice Deploys a new tokenized Single Sided Balancer strategy.
-     * @param _asset Underlying asset address
-     * @param _name Name for strategy
-     * @param _pool Balancer pool to deposit into
-     * @param _rewardsContract Aurora contract to stake lp token
-     * @param _maxSingleTrade Max in asset to join/exit at a time.
      * @return strategy Address of the deployed strategy
      */
-    function newSingleSidedBalancer(
-        address _asset,
+    function newBPTBalancer(
         string memory _name,
-        address _pool,
-        address _rewardsContract,
-        uint256 _maxSingleTrade
+        address _asset,
+        address _auraRewardsContract,
+        address[3][] memory _rewardsTargetsPools,
+        address _illiquidReward
     ) external returns (address) {
-        // Check if a SSB has already been deployed for that pool.
-        if (deployments[_asset][_pool] != address(0))
-            revert AlreadyDeployed(deployments[_asset][_pool]);
+        if (deployments[_asset] != address(0))
+            revert AlreadyDeployed(deployments[_asset]);
 
         /// Need to give the address the correct interface.
         IStrategyInterface strategy = IStrategyInterface(
             address(
-                new SingleSidedBalancer(
-                    _asset,
+                new BPTBalancer(
                     _name,
-                    _pool,
-                    _rewardsContract,
-                    _maxSingleTrade
+                    _asset,
+                    _auraRewardsContract,
+                    _rewardsTargetsPools,
+                    _illiquidReward
                 )
             )
         );
@@ -78,7 +72,7 @@ contract SingleSidedBalancerFactory {
         strategy.setPendingManagement(management);
 
         // Add to deployment addresses.
-        deployments[_asset][_pool] = address(strategy);
+        deployments[_asset] = address(strategy);
 
         emit Deployed(address(strategy));
         return address(strategy);
@@ -99,7 +93,6 @@ contract SingleSidedBalancerFactory {
         address _strategy
     ) external view returns (bool) {
         address _asset = IStrategyInterface(_strategy).asset();
-        address _pool = IStrategyInterface(_strategy).pool();
-        return deployments[_asset][_pool] == _strategy;
+        return deployments[_asset] == _strategy;
     }
 }
